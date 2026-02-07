@@ -1,0 +1,79 @@
+---
+description: Project context and background for AI agents working on this codebase
+globs:
+alwaysApply: true
+---
+
+# Analytics Automation -- Project Context
+
+## What This Project Is
+
+A registry-driven daily metric monitoring framework with AI-powered analysis, designed to run on Databricks. It pulls business metrics from BigQuery, computes WoW/YoY deltas, applies deterministic anomaly detection, then feeds structured results to an OpenAI agent for analytical narrative synthesis.
+
+## Architecture
+
+```
+Monitor Registry (config in libs/monitor_registry.py)
+    ↓
+Monitor Engine (libs/monitor_engine.py: pull data → compute deltas → flag anomalies)
+    ↓
+Analyst Agent (libs/agent_lib.py: OpenAI Agents SDK → narrative + hypotheses)
+    ↓
+Outputs (Slack via libs/slack_lib.py, BigQuery archive)
+```
+
+The orchestrator.py is the main entry point. It runs on Databricks as a notebook (with widgets for parameters) or locally via CLI.
+
+## Key Design Decisions
+
+1. **Registry-driven**: Adding a new analysis requires only a new SQL template in `queries/` and a config entry in `monitor_registry.py`. No engine/agent/orchestrator changes needed.
+
+2. **Deterministic anomaly detection first, AI second**: The monitor engine applies rule-based thresholds (WoW >10%, YoY >15%) to flag anomalies. The AI agent receives pre-flagged structured data and does analytical reasoning, hypothesis generation, and narrative synthesis -- NOT raw anomaly detection.
+
+3. **Structured AI output**: The agent returns a Pydantic `AnalysisResult` with `headline`, `findings` (each with `hypotheses`), and `markdown_report`. This enables both programmatic use and human-readable Slack reports.
+
+4. **Tier 2 AI analysis**: The agent goes beyond summarization -- it connects dots across domains, generates hypotheses with evidence and confidence levels, and recommends actions.
+
+## Current State (as of Feb 2026)
+
+- **MVP built with one monitor**: `revenue_funnel` -- tracks the demand-to-revenue pipeline (Intentful Visitors → Requests → Projects → Revenue) with channel breakdown.
+- **Model**: Currently set to `o3` (OpenAI's strongest reasoning model).
+- **Not yet tested on Databricks** -- code is committed, repo created, ready for Databricks Repos sync.
+- **Feedback loop not built yet** -- planned for future phase (Slack reactions, feedback BQ table, prompt tuning).
+
+## Databricks Environment
+
+- **Workspace**: `https://1977877856098707.7.gcp.databricks.com`
+- **OpenAI API key**: stored in Databricks secrets scope `openai`, key `api_key`
+- **BigQuery access**: cluster has GCP credentials for `tt-dp-prod` project
+- **Network egress**: confirmed working (can reach api.openai.com)
+- **Python**: 3.12 on cluster
+- **Key packages**: `openai-agents`, `google-cloud-bigquery`, `google-cloud-bigquery-storage`, `db-dtypes`
+
+## SQL Conventions (CRITICAL)
+
+These are Thumbtack-specific conventions that MUST be followed:
+
+1. **Timezone**: Always use `DATE(timestamp, 'America/Los_Angeles')` -- never bare `DATE(timestamp)`
+2. **Division**: Always use `SAFE_DIVIDE()` -- never direct `/`
+3. **Revenue**: Always UNION ALL two sources: `sot_intermediate.attributed_requests_pro_revenue` + `sot_intermediate.ttod_revenue`
+4. **Projects**: Identified by `request_pk` (NO `project_pk` column). Project exists when `project_created_time IS NOT NULL`
+5. **YoY offsets**: 364 days (not 365) to preserve day-of-week alignment
+6. **No `is_test` filter**: Column was deprecated and removed. All data in `sot_analytics.*` is production.
+7. **Intentful visitors**: Use `sot_analytics.intentful_visits` (not `ir_searches`)
+8. **Channel columns**: `tackboard_segment_detailed` on requests/contacts (8-category), `tackboard_segment` on intentful_visits (3-category)
+
+## Planned Future Work
+
+1. **More monitors**: HBO (hard budget/overserving), mix shift decomposition, experiment tracking, pro retention
+2. **Feedback loop**: Slack bot for reactions, `feedback_log` BQ table, weekly review notebook, prompt tuning from feedback
+3. **Tier 3 agent**: Tool-using agent that can autonomously run follow-up BigQuery queries to test hypotheses
+4. **Databricks Job scheduling**: Daily automated runs once MVP is validated
+
+## Reference: Teammate's SEM Beacon
+
+This project was inspired by a teammate's (kying) SEM Beacon notebook (`agent_report_sample/SEM Beacon mvp v1.0.ipynb` in the ad-hoc repo). That notebook uses the same OpenAI Agents SDK but is monolithic (everything in one notebook). This project improves on it with modular architecture, registry-driven design, and deterministic anomaly detection.
+
+## Repo History
+
+- Originally created inside the `ad-hoc` repo (`chicheng12/sql-analytics`), then extracted to this standalone repo (`chicheng12/analytics-automation`) for clean Databricks Repos sync.
