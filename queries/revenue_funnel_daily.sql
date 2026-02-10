@@ -47,6 +47,8 @@ projects_daily AS (
         {dimension_col_project} AS dimension,
         COUNT(DISTINCT p.request_pk) AS projects
     FROM `tt-dp-prod.sot_analytics.projects` AS p
+    LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
+        ON p.request_pk = r.request_pk
     WHERE p.project_created_time IS NOT NULL
         AND DATE(p.project_created_time, 'America/Los_Angeles') {date_filter}
     GROUP BY 1, 2
@@ -59,23 +61,24 @@ contacts_daily AS (
         {dimension_col_contact} AS dimension,
         COUNT(DISTINCT c.contact_pk) AS contacts
     FROM `tt-dp-prod.sot_analytics.contacts` AS c
+    LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
+        ON c.request_pk = r.request_pk
     WHERE c.contact_created_time IS NOT NULL
         AND DATE(c.contact_created_time, 'America/Los_Angeles') {date_filter}
     GROUP BY 1, 2
 ),
 
--- Revenue (UNION ALL of both sources)
-revenue_daily AS (
+-- Revenue (UNION ALL of both sources, then aggregate to one row per date+dimension)
+revenue_combined AS (
     -- Source 1: Attributed requests pro revenue
     SELECT
         DATE(rev.transaction_timestamp, 'America/Los_Angeles') AS metric_date,
         {dimension_col_revenue} AS dimension,
-        SUM(rev.gross_revenue) AS revenue
+        rev.gross_revenue AS revenue
     FROM `tt-dp-prod.sot_intermediate.attributed_requests_pro_revenue` AS rev
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
         ON rev.request_pk = r.request_pk
     WHERE DATE(rev.transaction_timestamp, 'America/Los_Angeles') {date_filter}
-    GROUP BY 1, 2
 
     UNION ALL
 
@@ -83,18 +86,21 @@ revenue_daily AS (
     SELECT
         DATE(rev.ts, 'America/Los_Angeles') AS metric_date,
         {dimension_col_revenue} AS dimension,
-        SUM(
-            rev.net_revenue
+        rev.net_revenue
             + IFNULL(rev.refund, 0)
             + IFNULL(rev.payout, 0)
             + IFNULL(rev.transfer_reversal, 0)
             + IFNULL(rev.cancellation_revenue, 0)
             + IFNULL(rev.transfer_reversal_failed, 0)
-        ) AS revenue
+        AS revenue
     FROM `tt-dp-prod.sot_intermediate.ttod_revenue` AS rev
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
         ON rev.request_pk = r.request_pk
     WHERE DATE(rev.ts, 'America/Los_Angeles') {date_filter}
+),
+revenue_daily AS (
+    SELECT metric_date, dimension, SUM(revenue) AS revenue
+    FROM revenue_combined
     GROUP BY 1, 2
 )
 

@@ -21,10 +21,22 @@ def get_bq_client(project: str = DEFAULT_PROJECT) -> bigquery.Client:
     """
     Create a BigQuery client.
 
-    On Databricks: uses cluster-attached service account credentials.
+    On Databricks (both Prod and LLM workspaces): uses google.auth.default()
+    with drive + cloud-platform scopes (per Thumbtack LLM playbook).
     Locally: uses Application Default Credentials (gcloud auth application-default login).
     """
-    return bigquery.Client(project=project)
+    try:
+        import google.auth
+        credentials, auth_project = google.auth.default(
+            scopes=[
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/cloud-platform",
+            ]
+        )
+        return bigquery.Client(credentials=credentials, project=project)
+    except Exception:
+        # Fallback: let bigquery.Client find credentials itself (works locally with ADC)
+        return bigquery.Client(project=project)
 
 
 def bq_to_df(

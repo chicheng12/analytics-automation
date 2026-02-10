@@ -28,7 +28,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from libs.monitor_engine import MonitorResult
 
-MODEL_NAME = "o3"
+MODEL_NAME = "gpt-5.2"
 
 
 # ===================================================================
@@ -301,15 +301,16 @@ def compute_cost(usage, model: str = MODEL_NAME) -> dict:
     dict with token counts and costs.
     """
     # Model pricing (update when switching models)
-    # Source: https://openai.com/api/pricing/
+    # Source: https://openai.com/api/pricing/ (updated Feb 2026)
     PRICING = {
+        "gpt-5.2": {"input": 1.75 / 1_000_000, "cached": 0.175 / 1_000_000, "output": 14.00 / 1_000_000},
+        "gpt-5": {"input": 1.25 / 1_000_000, "cached": 0.125 / 1_000_000, "output": 10.00 / 1_000_000},
+        "gpt-5-mini": {"input": 0.25 / 1_000_000, "cached": 0.025 / 1_000_000, "output": 2.00 / 1_000_000},
         "o3": {"input": 10.00 / 1_000_000, "cached": 2.50 / 1_000_000, "output": 40.00 / 1_000_000},
         "o4-mini": {"input": 1.10 / 1_000_000, "cached": 0.275 / 1_000_000, "output": 4.40 / 1_000_000},
-        "gpt-4o": {"input": 2.50 / 1_000_000, "cached": 1.25 / 1_000_000, "output": 10.00 / 1_000_000},
-        "gpt-4o-mini": {"input": 0.15 / 1_000_000, "cached": 0.075 / 1_000_000, "output": 0.60 / 1_000_000},
         "gpt-4.1": {"input": 2.00 / 1_000_000, "cached": 0.50 / 1_000_000, "output": 8.00 / 1_000_000},
     }
-    prices = PRICING.get(model, PRICING["o3"])
+    prices = PRICING.get(model, PRICING["gpt-5.2"])
 
     input_tokens = usage.input_tokens
     cached_tokens = getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", 0) or 0

@@ -1,0 +1,15 @@
+# Core dependencies
+google-cloud-bigquery
+google-cloud-bigquery-storage
+db-dtypes
+pandas
+numpy
+
+# AI agent
+openai-agents
+
+# Slack integration
+requests
+
+# Dev workflow
+databricks-cli

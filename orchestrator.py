@@ -1,3 +1,4 @@
+# Databricks notebook source
 """
 Orchestrator
 =============
@@ -49,9 +50,19 @@ except NameError:
     IS_DATABRICKS = False
 
 # %%
-# -- Package installs (Databricks only, uncomment on first run) --
+# -- Package installs (Databricks only) --
+# When running interactively in Databricks UI, uncomment these two lines instead:
 # %pip install google-cloud-bigquery google-cloud-bigquery-storage openai-agents db-dtypes
 # dbutils.library.restartPython()
+
+# When running via job submit (make run / make run-llm), install programmatically:
+if IS_DATABRICKS:
+    import subprocess, sys
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install", "-q",
+        "google-cloud-bigquery", "google-cloud-bigquery-storage",
+        "openai-agents", "db-dtypes",
+    ])
 
 # %%
 # -- Imports --
@@ -141,9 +152,26 @@ if RUN_AI_AGENT and monitor_results:
     from libs.agent_lib import run_analysis, compute_cost
 
     # Run the analyst agent
-    analysis_output, agent_run_result = asyncio.get_event_loop().run_until_complete(
-        run_analysis(monitor_results)
-    )
+    # Databricks already runs an event loop, so use nest_asyncio or await directly
+    try:
+        import nest_asyncio
+        nest_asyncio.apply()
+    except ImportError:
+        pass  # nest_asyncio not available; will work if no loop is running
+
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        # Databricks environment: create a task in the existing loop
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            analysis_output, agent_run_result = pool.submit(
+                asyncio.run, run_analysis(monitor_results)
+            ).result()
+    else:
+        # Local environment: no loop running
+        analysis_output, agent_run_result = loop.run_until_complete(
+            run_analysis(monitor_results)
+        )
 
     # Display the narrative
     print("\n" + "=" * 60)

@@ -82,14 +82,8 @@ DIMENSION_SQL = {
     "channel": {
         "dimension_col_iv": "COALESCE(iv.tackboard_segment, 'Unknown')",
         "dimension_col": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
-        "dimension_col_project": (
-            "COALESCE(("
-            "SELECT rr.tackboard_segment_detailed "
-            "FROM `tt-dp-prod.sot_analytics.requests` rr "
-            "WHERE rr.request_pk = p.request_pk LIMIT 1"
-            "), 'Unknown')"
-        ),
-        "dimension_col_contact": "COALESCE(c.tackboard_segment_detailed, 'Unknown')",
+        "dimension_col_project": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
+        "dimension_col_contact": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
         "dimension_col_revenue": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
     },
 }
