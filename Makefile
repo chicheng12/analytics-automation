@@ -32,6 +32,8 @@ CLUSTER_ID         ?= $(error Set CLUSTER_ID: make run CLUSTER_ID=xxxx-xxxxxx-xx
 DATE             ?=
 MONITORS         ?= revenue_funnel
 RUN_AI           ?= True
+SLACK_BOT_TOKEN  ?=
+SLACK_CHANNEL    ?=
 
 # ============================================================================
 # Targets
@@ -128,7 +130,9 @@ run-llm: ## Run on LLM workspace (with AI agent)
 					"base_parameters": { \
 						"date": "$(DATE)", \
 						"monitors": "$(MONITORS)", \
-						"run_ai_agent": "$(RUN_AI)" \
+						"run_ai_agent": "$(RUN_AI)", \
+						"slack_bot_token": "$(SLACK_BOT_TOKEN)", \
+						"slack_channel": "$(SLACK_CHANNEL)" \
 					} \
 				} \
 			}] \

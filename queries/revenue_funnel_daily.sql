@@ -2,28 +2,44 @@
 -- ==============================
 -- Parameterized SQL template for the revenue funnel monitor.
 -- Computes daily counts for: intentful visitors, requests, projects, contacts, revenue
--- with optional channel breakdown.
+-- with optional channel breakdown using the 4-channel taxonomy:
+--   O&O = Direct App, Direct Web, Paid Other O&O, EM
+--   SEM = SEM, Paid Other
+--   SEO = SEO
+--   Partnership = Partnership
 --
 -- Parameters (injected by monitor_engine.py):
 --   {date_filter}            -- e.g., "BETWEEN '2026-01-01' AND '2026-02-05'"
---   {dimension_col_iv}       -- IV table dimension (uses tackboard_segment, 3-category)
---   {dimension_col}          -- Requests table dimension (uses tackboard_segment_detailed)
---   {dimension_col_project}  -- Projects table dimension
---   {dimension_col_contact}  -- Contacts table dimension
---   {dimension_col_revenue}  -- Revenue table dimension (via JOIN to requests)
+--   {dimension_col_iv}       -- IV table dimension expression
+--   {dimension_col}          -- Requests table dimension expression
+--   {dimension_col_project}  -- Projects table dimension expression
+--   {dimension_col_contact}  -- Contacts table dimension expression
+--   {dimension_col_revenue}  -- Revenue table dimension expression
 --
 -- All timestamps use PT timezone as per business convention.
 -- Revenue uses UNION ALL of both sources (attributed + ttod).
 -- Projects identified by request_pk where project_created_time IS NOT NULL.
 
 WITH
--- Intentful Visitors (one row = one visit in sot_analytics.intentful_visits)
+channel_map AS (
+    SELECT 'Direct App' AS segment_detailed, 'O&O' AS channel UNION ALL
+    SELECT 'Direct Web', 'O&O' UNION ALL
+    SELECT 'Paid Other O&O', 'O&O' UNION ALL
+    SELECT 'EM', 'O&O' UNION ALL
+    SELECT 'SEM', 'SEM' UNION ALL
+    SELECT 'Paid Other', 'SEM' UNION ALL
+    SELECT 'SEO', 'SEO' UNION ALL
+    SELECT 'Partnership', 'Partnership'
+),
+
+-- Intentful Visitors
 iv_daily AS (
     SELECT
         iv.visit_date AS metric_date,
         {dimension_col_iv} AS dimension,
         COUNT(*) AS intentful_visitors
     FROM `tt-dp-prod.sot_analytics.intentful_visits` AS iv
+    LEFT JOIN channel_map cm_iv ON iv.tackboard_segment_detailed = cm_iv.segment_detailed
     WHERE iv.visit_date {date_filter}
     GROUP BY 1, 2
 ),
@@ -35,6 +51,7 @@ requests_daily AS (
         {dimension_col} AS dimension,
         COUNT(DISTINCT r.request_pk) AS requests
     FROM `tt-dp-prod.sot_analytics.requests` AS r
+    LEFT JOIN channel_map cm ON r.tackboard_segment_detailed = cm.segment_detailed
     WHERE r.request_created_time IS NOT NULL
         AND DATE(r.request_created_time, 'America/Los_Angeles') {date_filter}
     GROUP BY 1, 2
@@ -49,6 +66,7 @@ projects_daily AS (
     FROM `tt-dp-prod.sot_analytics.projects` AS p
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
         ON p.request_pk = r.request_pk
+    LEFT JOIN channel_map cm ON r.tackboard_segment_detailed = cm.segment_detailed
     WHERE p.project_created_time IS NOT NULL
         AND DATE(p.project_created_time, 'America/Los_Angeles') {date_filter}
     GROUP BY 1, 2
@@ -63,14 +81,14 @@ contacts_daily AS (
     FROM `tt-dp-prod.sot_analytics.contacts` AS c
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
         ON c.request_pk = r.request_pk
+    LEFT JOIN channel_map cm ON r.tackboard_segment_detailed = cm.segment_detailed
     WHERE c.contact_created_time IS NOT NULL
         AND DATE(c.contact_created_time, 'America/Los_Angeles') {date_filter}
     GROUP BY 1, 2
 ),
 
--- Revenue (UNION ALL of both sources, then aggregate to one row per date+dimension)
+-- Revenue (UNION ALL of both sources, then aggregate)
 revenue_combined AS (
-    -- Source 1: Attributed requests pro revenue
     SELECT
         DATE(rev.transaction_timestamp, 'America/Los_Angeles') AS metric_date,
         {dimension_col_revenue} AS dimension,
@@ -78,11 +96,11 @@ revenue_combined AS (
     FROM `tt-dp-prod.sot_intermediate.attributed_requests_pro_revenue` AS rev
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
         ON rev.request_pk = r.request_pk
+    LEFT JOIN channel_map cm ON r.tackboard_segment_detailed = cm.segment_detailed
     WHERE DATE(rev.transaction_timestamp, 'America/Los_Angeles') {date_filter}
 
     UNION ALL
 
-    -- Source 2: TToD revenue
     SELECT
         DATE(rev.ts, 'America/Los_Angeles') AS metric_date,
         {dimension_col_revenue} AS dimension,
@@ -96,6 +114,7 @@ revenue_combined AS (
     FROM `tt-dp-prod.sot_intermediate.ttod_revenue` AS rev
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r
         ON rev.request_pk = r.request_pk
+    LEFT JOIN channel_map cm ON r.tackboard_segment_detailed = cm.segment_detailed
     WHERE DATE(rev.ts, 'America/Los_Angeles') {date_filter}
 ),
 revenue_daily AS (

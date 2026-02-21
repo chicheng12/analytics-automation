@@ -36,9 +36,11 @@ The orchestrator.py is the main entry point. It runs on Databricks as a notebook
 
 ## Current State (as of Feb 2026)
 
-- **MVP built with one monitor**: `revenue_funnel` -- tracks the demand-to-revenue pipeline (Intentful Visitors → Requests → Projects → Revenue) with channel breakdown.
-- **Model**: Currently set to `o3` (OpenAI's strongest reasoning model).
-- **Not yet tested on Databricks** -- code is committed, repo created, ready for Databricks Repos sync.
+- **MVP built with one monitor**: `revenue_funnel` -- tracks the demand-to-revenue pipeline (Intentful Visitors → Requests → Projects → Revenue) with channel breakdown using 4-channel taxonomy (O&O, SEM, SEO, Partnership).
+- **Model**: Currently set to `gpt-5.2`.
+- **Tested on Databricks LLM workspace** -- runs end-to-end via `make run-llm`.
+- **SOT cross-validation**: Pipeline validates metrics against `sot_analytics.2026_daily_metrics` and auto-resolves to latest complete day.
+- **Standardized report format**: AI output follows a fixed template (Headline → Scorecard → Channel Breakdown → Findings → Anomaly Flags → Validation).
 - **Feedback loop not built yet** -- planned for future phase (Slack reactions, feedback BQ table, prompt tuning).
 
 ## Databricks Environment
@@ -61,7 +63,8 @@ These are Thumbtack-specific conventions that MUST be followed:
 5. **YoY offsets**: 364 days (not 365) to preserve day-of-week alignment
 6. **No `is_test` filter**: Column was deprecated and removed. All data in `sot_analytics.*` is production.
 7. **Intentful visitors**: Use `sot_analytics.intentful_visits` (not `ir_searches`)
-8. **Channel columns**: `tackboard_segment_detailed` on requests/contacts (8-category), `tackboard_segment` on intentful_visits (3-category)
+8. **Channel taxonomy**: Use 4-channel grouping via `channel_map` CTE: O&O (Direct App, Direct Web, Paid Other O&O, EM), SEM (SEM, Paid Other), SEO, Partnership. Map from `tackboard_segment_detailed`.
+9. **SOT validation**: Cross-validate against `sot_analytics.2026_daily_metrics` (columns: `total_iv`, `total_requests`, `total_projects`, `total_revenue`, `total_revenue_per_project`)
 
 ## Planned Future Work
 

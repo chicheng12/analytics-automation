@@ -4,12 +4,14 @@ Monitor Engine
 Generic, registry-driven engine that processes any monitor config.
 
 For each monitor it:
-1. Loads the SQL template and injects dimension-specific parameters
-2. Pulls data from BigQuery for the current period and comparison periods
-3. Computes ratio metrics from raw counts
-4. Calculates WoW and YoY deltas
-5. Applies deterministic anomaly detection rules
-6. Returns a structured MonitorResult
+1. Resolves the report date (using SOT table to ensure data completeness)
+2. Loads the SQL template and injects dimension-specific parameters
+3. Pulls data from BigQuery for the current period and comparison periods
+4. Computes ratio metrics from raw counts
+5. Calculates WoW and YoY deltas
+6. Cross-validates key metrics against the SOT table
+7. Applies deterministic anomaly detection rules
+8. Returns a structured MonitorResult
 
 Usage:
     from libs.monitor_engine import MonitorEngine
@@ -30,6 +32,17 @@ import numpy as np
 
 from libs.bq_client import bq_to_df, get_bq_client
 from libs.monitor_registry import MONITOR_REGISTRY, get_query_path
+
+SOT_TABLE = "tt-dp-prod.sot_analytics.2026_daily_metrics"
+
+SOT_COLUMN_MAP = {
+    "intentful_visitors": "total_iv",
+    "requests": "total_requests",
+    "projects": "total_projects",
+    "revenue": "total_revenue",
+}
+
+VALIDATION_TOLERANCE = 0.002
 
 
 # ===================================================================
@@ -52,6 +65,16 @@ class Anomaly:
 
 
 @dataclass
+class ValidationResult:
+    """Cross-validation of a single metric against the SOT table."""
+    metric: str
+    our_value: float
+    sot_value: float
+    pct_diff: float
+    passed: bool
+
+
+@dataclass
 class MonitorResult:
     """Complete output from running one monitor."""
     domain: str                          # registry key, e.g., "revenue_funnel"
@@ -62,6 +85,7 @@ class MonitorResult:
     anomalies: list[Anomaly]             # flagged issues
     context: str                         # domain description for the AI agent
     raw_data: dict[str, pd.DataFrame] = field(default_factory=dict)
+    validations: list[ValidationResult] = field(default_factory=list)
 
 
 # ===================================================================
@@ -69,8 +93,8 @@ class MonitorResult:
 # ===================================================================
 
 # Maps dimension names to the SQL column expressions for each CTE.
-# The IV table uses tackboard_segment (3-category), while other tables
-# use tackboard_segment_detailed (8-category).
+# Uses channel_map CTE (defined in the SQL template) for 4-channel taxonomy:
+# O&O, SEM, SEO, Partnership.
 DIMENSION_SQL = {
     "overall": {
         "dimension_col_iv": "'overall'",
@@ -80,11 +104,11 @@ DIMENSION_SQL = {
         "dimension_col_revenue": "'overall'",
     },
     "channel": {
-        "dimension_col_iv": "COALESCE(iv.tackboard_segment, 'Unknown')",
-        "dimension_col": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
-        "dimension_col_project": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
-        "dimension_col_contact": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
-        "dimension_col_revenue": "COALESCE(r.tackboard_segment_detailed, 'Unknown')",
+        "dimension_col_iv": "COALESCE(cm_iv.channel, 'Other')",
+        "dimension_col": "COALESCE(cm.channel, 'Other')",
+        "dimension_col_project": "COALESCE(cm.channel, 'Other')",
+        "dimension_col_contact": "COALESCE(cm.channel, 'Other')",
+        "dimension_col_revenue": "COALESCE(cm.channel, 'Other')",
     },
 }
 
@@ -106,6 +130,34 @@ class MonitorEngine:
     def __init__(self, client=None):
         self.client = client or get_bq_client()
 
+    def resolve_report_date(self, date: str | None = None) -> str:
+        """
+        Determine the report date, ensuring it has complete data.
+
+        If no date is provided, queries the SOT table for the most recent
+        complete day. If a date is provided, validates it exists in the SOT.
+        """
+        if date:
+            check_sql = f"""
+                SELECT metric_date
+                FROM `{SOT_TABLE}`
+                WHERE metric_date = '{date}'
+            """
+            df = bq_to_df(check_sql, client=self.client)
+            if df.empty:
+                print(f"  WARNING: Date {date} not found in SOT table — data may be incomplete.")
+                print(f"           Proceeding anyway, but results may be partial.")
+            return date
+
+        latest_sql = f"""
+            SELECT MAX(metric_date) AS latest_date
+            FROM `{SOT_TABLE}`
+        """
+        df = bq_to_df(latest_sql, client=self.client)
+        resolved = str(df["latest_date"].iloc[0])
+        print(f"  Auto-resolved report date to {resolved} (latest complete day in SOT)")
+        return resolved
+
     def run(self, monitor_key: str, date: str | None = None) -> MonitorResult:
         """
         Run a monitor and return structured results.
@@ -115,14 +167,14 @@ class MonitorEngine:
         monitor_key : str
             Key in MONITOR_REGISTRY (e.g., "revenue_funnel").
         date : str, optional
-            Report date in YYYY-MM-DD format. Defaults to yesterday (PT).
+            Report date in YYYY-MM-DD. Defaults to latest complete day in SOT.
 
         Returns
         -------
         MonitorResult
         """
         config = MONITOR_REGISTRY[monitor_key]
-        report_date = date or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        report_date = self.resolve_report_date(date)
 
         print(f"\n{'='*60}")
         print(f"Running: {config['name']}")
@@ -152,7 +204,10 @@ class MonitorEngine:
             (detail_df["dim_type"] == "overall") & (detail_df["dimension"] == "overall")
         ].copy()
 
-        # 4. Detect anomalies
+        # 4. Cross-validate against SOT
+        validations = self._validate_against_sot(summary_df, report_date)
+
+        # 5. Detect anomalies
         anomalies = self._detect_anomalies(detail_df, config)
         print(f"\n  Anomalies detected: {len(anomalies)}")
 
@@ -165,7 +220,66 @@ class MonitorEngine:
             anomalies=anomalies,
             context=config["context"],
             raw_data=raw_data,
+            validations=validations,
         )
+
+    # ----- SOT Validation -----
+
+    def _validate_against_sot(
+        self, summary_df: pd.DataFrame, report_date: str
+    ) -> list[ValidationResult]:
+        """Compare our overall metrics against the SOT table for the same date."""
+        validations = []
+        try:
+            sot_sql = f"""
+                SELECT total_iv, total_requests, total_projects, total_revenue,
+                       total_revenue_per_project
+                FROM `{SOT_TABLE}`
+                WHERE metric_date = '{report_date}'
+            """
+            sot_df = bq_to_df(sot_sql, client=self.client)
+        except Exception as e:
+            print(f"  WARNING: SOT validation skipped — {e}")
+            return validations
+
+        if sot_df.empty:
+            print(f"  WARNING: No SOT data for {report_date}, skipping validation")
+            return validations
+
+        sot_row = sot_df.iloc[0]
+        print(f"\n  Cross-validating against SOT ({SOT_TABLE}):")
+
+        if summary_df.empty:
+            print("    No summary data to validate")
+            return validations
+
+        our_row = summary_df.iloc[0]
+
+        for our_col, sot_col in SOT_COLUMN_MAP.items():
+            our_val = our_row.get(our_col, np.nan)
+            sot_val = sot_row.get(sot_col, np.nan)
+            if pd.isna(our_val) or pd.isna(sot_val) or sot_val == 0:
+                continue
+            pct_diff = abs(our_val - sot_val) / abs(sot_val)
+            passed = pct_diff <= VALIDATION_TOLERANCE
+            status = "PASS" if passed else "FAIL"
+            print(f"    {our_col}: ours={our_val:,.2f}, SOT={sot_val:,.2f}, "
+                  f"diff={pct_diff:.2%} [{status}]")
+            validations.append(ValidationResult(
+                metric=our_col,
+                our_value=our_val,
+                sot_value=sot_val,
+                pct_diff=pct_diff,
+                passed=passed,
+            ))
+
+        failed = [v for v in validations if not v.passed]
+        if failed:
+            print(f"  WARNING: {len(failed)} metric(s) failed SOT validation!")
+        else:
+            print(f"  All {len(validations)} metrics passed SOT validation")
+
+        return validations
 
     # ----- Data Pull -----
 
@@ -301,10 +415,10 @@ class MonitorEngine:
 
     def _detect_anomalies(self, detail_df: pd.DataFrame, config: dict) -> list[Anomaly]:
         """
-        Apply deterministic anomaly rules to the computed deltas.
+        Apply deterministic anomaly rules to YoY growth changes.
 
+        Focuses on YoY as the primary signal for structural performance changes.
         Rules are defined in config['anomaly_rules']:
-            - wow_threshold: flag if absolute WoW change exceeds this
             - yoy_threshold: flag if absolute YoY change exceeds this
             - min_denominator: ignore dimensions with volume below this
         """
@@ -312,8 +426,7 @@ class MonitorEngine:
             return []
 
         rules = config.get("anomaly_rules", {})
-        wow_thresh = rules.get("wow_threshold", 0.10)
-        yoy_thresh = rules.get("yoy_threshold", 0.15)
+        yoy_thresh = rules.get("yoy_threshold", 0.10)
         min_denom = rules.get("min_denominator", 50)
 
         anomalies = []
@@ -326,33 +439,9 @@ class MonitorEngine:
             for _, row in detail_df.iterrows():
                 dim_value = row.get("dimension", "overall")
 
-                # Skip tiny dimensions
                 if denom_col in row and pd.notna(row[denom_col]) and row[denom_col] < min_denom:
                     continue
 
-                # Check WoW
-                wow_col = f"{metric_key}_wow"
-                if wow_col in row and pd.notna(row[wow_col]):
-                    pct = row[wow_col]
-                    if abs(pct) > wow_thresh:
-                        # Severity: high if change is in the bad direction and large
-                        is_bad = (direction == "up" and pct < 0) or (direction == "down" and pct > 0)
-                        severity = "high" if is_bad and abs(pct) > wow_thresh * 2 else "medium"
-                        if is_bad:  # only flag adverse changes
-                            anomalies.append(Anomaly(
-                                metric=metric_key,
-                                metric_label=label,
-                                dimension=dim_value,
-                                comparison="wow",
-                                current_value=row.get(metric_key, np.nan),
-                                prior_value=row.get(f"{metric_key}_wow_prior", np.nan),
-                                pct_change=pct,
-                                threshold=wow_thresh,
-                                severity=severity,
-                                direction=direction,
-                            ))
-
-                # Check YoY
                 yoy_col = f"{metric_key}_yoy"
                 if yoy_col in row and pd.notna(row[yoy_col]):
                     pct = row[yoy_col]
@@ -373,6 +462,5 @@ class MonitorEngine:
                                 direction=direction,
                             ))
 
-        # Sort: high severity first, then by absolute magnitude of change
         anomalies.sort(key=lambda a: (0 if a.severity == "high" else 1, -abs(a.pct_change)))
         return anomalies

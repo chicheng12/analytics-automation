@@ -60,7 +60,7 @@ MONITOR_REGISTRY = {
                 "label": "Contacts per Project (CPP)",
                 "numerator": "contacts",
                 "denominator": "projects",
-                "direction": "down",
+                "direction": "up",
             },
             "rpc": {
                 "label": "Revenue per Contact (RPC)",
@@ -78,17 +78,18 @@ MONITOR_REGISTRY = {
             "revenue",
         ],
         "anomaly_rules": {
-            "wow_threshold": 0.10,  # flag if WoW change > 10%
-            "yoy_threshold": 0.15,  # flag if YoY change > 15%
+            "yoy_threshold": 0.10,  # flag if YoY growth change > 10%
             "min_denominator": 50,  # ignore dimensions with tiny volume
         },
         "comparison": ["wow", "yoy"],
         "context": (
             "Revenue funnel metrics tracking the health of the demand-to-revenue pipeline. "
-            "The funnel flows: Intentful Visitors -> Requests -> Projects -> Revenue. "
-            "Key ratio metrics: IV-to-Request conversion, PPR (project conversion rate), "
-            "RPP (monetization per project), CPP (contacts per project), RPC (revenue per contact). "
-            "Breakdowns available by channel (SEM, SEO, Direct App, Direct Web, Partnership, etc.)."
+            "The funnel flows: Intentful Visitors (top-of-funnel) -> Requests/Projects (demand) -> Revenue. "
+            "Revenue growth decomposes into: (1) top-of-funnel visitor growth (IV), "
+            "(2) demand conversion (IV-to-Request, PPR), and (3) monetization (RPP). "
+            "The primary lens is YoY growth — explaining whether revenue growth is "
+            "driven by more visitors, better conversion, or stronger monetization. "
+            "Breakdowns available by channel (O&O, SEM, SEO, Partnership)."
         ),
     },
     # -----------------------------------------------------------------------

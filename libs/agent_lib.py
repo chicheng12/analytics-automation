@@ -28,6 +28,8 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from libs.monitor_engine import MonitorResult
 
+from libs.monitor_engine import VALIDATION_TOLERANCE
+
 MODEL_NAME = "gpt-5.2"
 
 
@@ -121,68 +123,93 @@ You are a senior business analyst at a two-sided home services marketplace
 You receive structured monitoring outputs from one or more business domains.
 Each monitor provides:
 - A summary table with current metric values, prior period values, and percent changes
-- A detail table with the same metrics broken down by dimension (e.g., channel)
-- A list of pre-flagged anomalies (from deterministic rules) with severity levels
+- A detail table with the same metrics broken down by channel (O&O, SEM, SEO, Partnership)
+- A list of pre-flagged anomalies (from deterministic YoY rules) with severity levels
 - Context describing what this domain measures
 
-## YOUR ANALYTICAL TASKS
+## YOUR PRIMARY ANALYTICAL FRAMEWORK: YoY Growth Decomposition
 
-### 1. CROSS-DOMAIN CONNECTIONS
-- If multiple monitors are provided, look for causal links between findings.
-  For example: if RPP dropped and PPR also dropped, that compounds revenue impact.
-- If only one monitor is provided, connect findings across dimensions
-  (e.g., "SEM channel shows RPP decline while SEO is stable").
+The #1 question to answer is: *Why is revenue YoY growth what it is?*
 
-### 2. HEADLINE
-- Lead with the single most impactful finding in one sentence.
-- Include the specific metric value and percent change.
+Revenue growth decomposes into three drivers:
+1. *Top-of-funnel growth* — Are more Intentful Visitors (IVs) arriving? (supply of demand)
+2. *Demand conversion* — Are IVs converting to Requests/Projects at a higher rate? (IV→Request, PPR)
+3. *Monetization* — Is each project generating more revenue? (RPP = Revenue per Project)
 
-### 3. FINDINGS (ranked by business impact)
+Your headline MUST explain which of these three drivers is primarily responsible for
+the current YoY revenue growth (or decline). Be specific about magnitudes.
+
+Example good headline:
+"Revenue grew +28% YoY to $1.39M, driven primarily by demand growth (+17% requests)
+and stronger monetization (+11% RPP), with modest top-of-funnel growth (+5% IVs)."
+
+## ANALYTICAL TASKS
+
+### 1. HEADLINE (YoY focused)
+- State revenue YoY growth and decompose into the three drivers above.
+- This should be the one thing a VP needs to know if they read nothing else.
+
+### 2. SCORECARD
+- Show key funnel metrics with YoY growth as the primary comparison.
+- Include WoW for context but YoY is the story.
+
+### 3. CHANNEL BREAKDOWN
+- Show metrics by channel (O&O, SEM, SEO, Partnership).
+- Highlight which channel is contributing most to YoY growth or decline.
+
+### 4. YoY GROWTH DRIVERS (2-4 findings)
 For each finding:
-- State what happened with specific numbers
-- Propose WHY (hypothesis) with evidence
-- Recommend what to do next
-- Distinguish between structural trends and episodic one-off changes
-
-### 4. SEVERITY RANKING
-Rank by business impact, not just statistical magnitude:
-- A 5% RPP drop across all channels is more impactful than a 30% swing in a tiny channel
-- Consider both the rate change AND the volume of the dimension
-
-### 5. HYPOTHESIS GENERATION
-For each major finding, propose:
-- A primary hypothesis with supporting evidence from the data
-- What data would confirm or reject it
-- Whether it looks structural (persistent trend) or episodic (one-off)
+- Identify which growth lever is moving (top-of-funnel, demand, monetization)
+- Quantify the contribution to overall revenue growth
+- Explain what's driving the change (channel mix, conversion improvement, etc.)
+- Flag if any lever is decelerating or at risk
 
 ## RULES
+- The PRIMARY lens is always YoY growth. WoW is secondary context only.
 - Every claim MUST cite specific numbers from the provided data
 - NEVER invent metrics not present in the inputs
-- Clearly distinguish between facts (from data) and hypotheses (your inference)
-- If the anomalies list is empty for a domain, say "no notable anomalies flagged"
-  rather than inventing a narrative
-- Use SAFE_DIVIDE-style thinking: if a denominator is very small, note that the
-  rate metric may be unreliable
+- Format numbers for readability: commas for thousands, 1 decimal for %, $ for revenue
 - Use Slack formatting: *bold* for headers (not **bold**), bullet points with •
+- If a denominator is very small, note that the rate metric may be unreliable
 
-## MARKDOWN REPORT FORMAT (for Slack)
-*Daily Revenue Funnel Analysis — {date}*
+## REQUIRED MARKDOWN REPORT FORMAT (for Slack)
+
+You MUST follow this exact template structure. Do not deviate.
+
+*Daily Revenue Funnel — {date}*
 
 *Headline:*
-• [Single most important finding]
+• Revenue [grew/fell] [X%] YoY to [$amount], driven by [top-of-funnel / demand / monetization]: [brief decomposition with numbers for each driver]
 
-*Key Findings:*
-• [Finding 1 with numbers]
-• [Finding 2 with numbers]
-...
+*Scorecard:*
+| Metric | Value | YoY | WoW |
+|--------|-------|-----|-----|
+| Intentful Visitors | [value] | [+/-X.X%] | [+/-X.X%] |
+| Requests | [value] | [+/-X.X%] | [+/-X.X%] |
+| Projects | [value] | [+/-X.X%] | [+/-X.X%] |
+| Revenue | [$value] | [+/-X.X%] | [+/-X.X%] |
+| RPP | [$value] | [+/-X.X%] | [+/-X.X%] |
+| PPR | [value] | [+/-X.X%] | [+/-X.X%] |
 
-*Hypotheses & Next Steps:*
-• [Hypothesis 1]: [Evidence] → [Next step]
-...
+*Channel Breakdown:*
+| Channel | Revenue | YoY | Projects | YoY | RPP | YoY |
+|---------|---------|-----|----------|-----|-----|-----|
+| O&O | [$] | [%] | [n] | [%] | [$] | [%] |
+| SEM | [$] | [%] | [n] | [%] | [$] | [%] |
+| SEO | [$] | [%] | [n] | [%] | [$] | [%] |
+| Partnership | [$] | [%] | [n] | [%] | [$] | [%] |
 
-*Anomaly Summary:*
-• [Count] anomalies flagged: [brief list]
-• No action needed / Investigate [X]
+*YoY Growth Drivers:*
+• *[Driver 1 — e.g., Demand growth]:* [What happened with YoY numbers] → [Why] → [Outlook]
+• *[Driver 2 — e.g., Monetization]:* [What happened with YoY numbers] → [Why] → [Outlook]
+• *[Driver 3 — e.g., Channel mix]:* [What happened with YoY numbers] → [Why] → [Outlook]
+
+*Anomaly Flags:*
+• [Count] YoY anomalies flagged
+• [Brief list of flagged items with severity]
+
+*Data Validation:*
+• Metrics cross-checked against SOT: [PASS/FAIL]
 """
 
 
@@ -237,6 +264,20 @@ def _format_monitor_for_prompt(result: MonitorResult) -> str:
             )
     else:
         sections.append("  No anomalies flagged.")
+
+    # SOT Validation
+    if result.validations:
+        sections.append(f"\n### SOT Cross-Validation")
+        all_passed = all(v.passed for v in result.validations)
+        if all_passed:
+            sections.append(f"  All {len(result.validations)} metrics passed (within {VALIDATION_TOLERANCE:.0%} tolerance)")
+        else:
+            for v in result.validations:
+                status = "PASS" if v.passed else "FAIL"
+                sections.append(
+                    f"  - {v.metric}: ours={v.our_value:,.2f}, SOT={v.sot_value:,.2f}, "
+                    f"diff={v.pct_diff:.2%} [{status}]"
+                )
 
     return "\n".join(sections)
 

@@ -23,28 +23,35 @@ Usage locally (for testing):
 # %%
 # -- Databricks widget setup (ignored when running locally) --
 try:
-    dbutils.widgets.text("date", "", "Report Date (YYYY-MM-DD, empty=yesterday)")
+    dbutils.widgets.text("date", "", "Report Date (YYYY-MM-DD, empty=latest complete)")
     dbutils.widgets.text("slack_webhook_url", "", "Slack Webhook URL (empty=skip)")
+    dbutils.widgets.text("slack_bot_token", "", "Slack Bot Token (xoxb-..., empty=skip)")
+    dbutils.widgets.text("slack_channel", "", "Slack Channel (#name or ID)")
     dbutils.widgets.dropdown("run_ai_agent", "True", ["True", "False"], "Run AI Agent?")
     dbutils.widgets.text("monitors", "revenue_funnel", "Monitors to run (comma-separated)")
 
     REPORT_DATE = dbutils.widgets.get("date") or None
     SLACK_WEBHOOK_URL = dbutils.widgets.get("slack_webhook_url") or None
+    SLACK_BOT_TOKEN = dbutils.widgets.get("slack_bot_token") or None
+    SLACK_CHANNEL = dbutils.widgets.get("slack_channel") or None
     RUN_AI_AGENT = dbutils.widgets.get("run_ai_agent") == "True"
     MONITOR_KEYS = [m.strip() for m in dbutils.widgets.get("monitors").split(",")]
     IS_DATABRICKS = True
 except NameError:
-    # Running locally
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=None)
+    parser.add_argument("--date", default=None, help="YYYY-MM-DD, empty=latest complete day")
     parser.add_argument("--slack-webhook-url", default=None)
+    parser.add_argument("--slack-bot-token", default=None, help="Slack bot token (xoxb-...)")
+    parser.add_argument("--slack-channel", default=None, help="Slack channel (#name or ID)")
     parser.add_argument("--no-ai", action="store_true")
     parser.add_argument("--monitors", default="revenue_funnel")
     args = parser.parse_args()
 
     REPORT_DATE = args.date
     SLACK_WEBHOOK_URL = args.slack_webhook_url
+    SLACK_BOT_TOKEN = args.slack_bot_token
+    SLACK_CHANNEL = args.slack_channel
     RUN_AI_AGENT = not args.no_ai
     MONITOR_KEYS = [m.strip() for m in args.monitors.split(",")]
     IS_DATABRICKS = False
@@ -80,10 +87,11 @@ from libs.monitor_engine import MonitorEngine
 from libs.monitor_registry import MONITOR_REGISTRY
 
 print(f"Analytics Automation Orchestrator")
-print(f"  Date: {REPORT_DATE or 'yesterday (auto)'}")
+print(f"  Date: {REPORT_DATE or 'latest complete (auto)'}")
 print(f"  Monitors: {MONITOR_KEYS}")
 print(f"  AI Agent: {RUN_AI_AGENT}")
-print(f"  Slack: {'configured' if SLACK_WEBHOOK_URL else 'skipped'}")
+SLACK_ENABLED = bool(SLACK_BOT_TOKEN and SLACK_CHANNEL) or bool(SLACK_WEBHOOK_URL)
+print(f"  Slack: {'bot token' if SLACK_BOT_TOKEN else 'webhook' if SLACK_WEBHOOK_URL else 'skipped'}")
 print(f"  Environment: {'Databricks' if IS_DATABRICKS else 'Local'}")
 
 # %% [markdown]
@@ -139,6 +147,16 @@ for result in monitor_results:
                   f"{a.pct_change:+.1%} {a.comparison}")
     else:
         print("\nNo anomalies flagged.")
+
+    if result.validations:
+        failed = [v for v in result.validations if not v.passed]
+        if failed:
+            print(f"\nSOT Validation: {len(failed)} FAILED out of {len(result.validations)}")
+            for v in failed:
+                print(f"  FAIL: {v.metric} — ours={v.our_value:,.2f}, "
+                      f"SOT={v.sot_value:,.2f}, diff={v.pct_diff:.2%}")
+        else:
+            print(f"\nSOT Validation: all {len(result.validations)} metrics passed")
 
 # %% [markdown]
 # ## 4. AI Analysis (Tier 2)
@@ -209,17 +227,18 @@ else:
 
 # %%
 # -- Post to Slack --
-if SLACK_WEBHOOK_URL and analysis_output:
+if SLACK_ENABLED and analysis_output:
     from libs.slack_lib import post_to_slack
 
     report_date_str = monitor_results[0].report_date if monitor_results else "unknown"
     post_to_slack(
-        webhook_url=SLACK_WEBHOOK_URL,
         text=analysis_output.markdown_report,
+        webhook_url=SLACK_WEBHOOK_URL,
+        bot_token=SLACK_BOT_TOKEN,
+        channel=SLACK_CHANNEL,
         header=f"Daily Analytics Report — {report_date_str}",
     )
-elif SLACK_WEBHOOK_URL and not analysis_output:
-    # Post a basic summary without AI if agent was skipped
+elif SLACK_ENABLED and not analysis_output:
     from libs.slack_lib import post_to_slack
 
     lines = ["*Daily Analytics Report (data only, no AI narrative)*\n"]
@@ -228,9 +247,14 @@ elif SLACK_WEBHOOK_URL and not analysis_output:
         lines.append(f"Anomalies: {len(result.anomalies)}")
         for a in result.anomalies[:5]:
             lines.append(f"• [{a.severity}] {a.metric_label} ({a.dimension}): {a.pct_change:+.1%} {a.comparison}")
-    post_to_slack(SLACK_WEBHOOK_URL, "\n".join(lines))
+    post_to_slack(
+        text="\n".join(lines),
+        webhook_url=SLACK_WEBHOOK_URL,
+        bot_token=SLACK_BOT_TOKEN,
+        channel=SLACK_CHANNEL,
+    )
 else:
-    print("\n  Slack posting skipped (no webhook URL configured)")
+    print("\n  Slack posting skipped (no credentials configured)")
 
 # %% [markdown]
 # ## 6. Archive to BigQuery (optional)
