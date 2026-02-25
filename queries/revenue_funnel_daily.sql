@@ -109,7 +109,6 @@ revenue_combined AS (
             + IFNULL(rev.payout, 0)
             + IFNULL(rev.transfer_reversal, 0)
             + IFNULL(rev.cancellation_revenue, 0)
-            + IFNULL(rev.transfer_reversal_failed, 0)
         AS revenue
     FROM `tt-dp-prod.sot_intermediate.ttod_revenue` AS rev
     LEFT JOIN `tt-dp-prod.sot_analytics.requests` AS r

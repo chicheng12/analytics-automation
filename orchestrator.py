@@ -226,8 +226,10 @@ else:
 # ## 5. Distribute Report
 
 # %%
-# -- Post to Slack --
-if SLACK_ENABLED and analysis_output:
+# -- Slack posting handled locally after Databricks run completes --
+# The LLM cluster cannot reach slack.com, so Slack posting is done
+# by the local `make run-llm` command using the notebook exit value.
+if not IS_DATABRICKS and SLACK_ENABLED and analysis_output:
     from libs.slack_lib import post_to_slack
 
     report_date_str = monitor_results[0].report_date if monitor_results else "unknown"
@@ -238,23 +240,8 @@ if SLACK_ENABLED and analysis_output:
         channel=SLACK_CHANNEL,
         header=f"Daily Analytics Report — {report_date_str}",
     )
-elif SLACK_ENABLED and not analysis_output:
-    from libs.slack_lib import post_to_slack
-
-    lines = ["*Daily Analytics Report (data only, no AI narrative)*\n"]
-    for result in monitor_results:
-        lines.append(f"*{result.name}*")
-        lines.append(f"Anomalies: {len(result.anomalies)}")
-        for a in result.anomalies[:5]:
-            lines.append(f"• [{a.severity}] {a.metric_label} ({a.dimension}): {a.pct_change:+.1%} {a.comparison}")
-    post_to_slack(
-        text="\n".join(lines),
-        webhook_url=SLACK_WEBHOOK_URL,
-        bot_token=SLACK_BOT_TOKEN,
-        channel=SLACK_CHANNEL,
-    )
 else:
-    print("\n  Slack posting skipped (no credentials configured)")
+    print("\n  Slack posting deferred to local runner (Databricks cannot reach slack.com)")
 
 # %% [markdown]
 # ## 6. Archive to BigQuery (optional)
@@ -307,6 +294,18 @@ if analysis_output and monitor_results:
         display(df_archive)
     else:
         print(df_archive.to_string())
+
+# %% [markdown]
+# ## 7. Return Report (for external Slack posting)
+
+# %%
+if IS_DATABRICKS and analysis_output:
+    import json as _json
+    dbutils.notebook.exit(_json.dumps({
+        "report": analysis_output.markdown_report,
+        "headline": analysis_output.headline,
+        "report_date": monitor_results[0].report_date if monitor_results else "",
+    }))
 
 print(f"\n{'='*60}")
 print("Done!")

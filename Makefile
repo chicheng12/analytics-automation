@@ -118,7 +118,7 @@ run-llm: ## Run on LLM workspace (with AI agent)
 	@echo "Submitting run on LLM cluster $(LLM_CLUSTER_ID)..."
 	@echo "Notebook: $(NOTEBOOK_PATH)"
 	@echo ""
-	databricks jobs submit \
+	@databricks jobs submit \
 		--profile $(LLM_PROFILE) \
 		--run-name "analytics-automation-dev" \
 		--json '{ \
@@ -130,15 +130,17 @@ run-llm: ## Run on LLM workspace (with AI agent)
 					"base_parameters": { \
 						"date": "$(DATE)", \
 						"monitors": "$(MONITORS)", \
-						"run_ai_agent": "$(RUN_AI)", \
-						"slack_bot_token": "$(SLACK_BOT_TOKEN)", \
-						"slack_channel": "$(SLACK_CHANNEL)" \
+						"run_ai_agent": "$(RUN_AI)" \
 					} \
 				} \
 			}] \
-		}'
-	@echo ""
-	@echo "✓ Run complete. Output shown above."
+		}' > /tmp/analytics_run_output.json
+	@echo "✓ Databricks run complete."
+	@if [ -n "$(SLACK_BOT_TOKEN)" ] && [ -n "$(SLACK_CHANNEL)" ]; then \
+		python3 post_to_slack.py /tmp/analytics_run_output.json "$(SLACK_BOT_TOKEN)" "$(SLACK_CHANNEL)"; \
+	else \
+		echo "  Slack posting skipped (no SLACK_BOT_TOKEN / SLACK_CHANNEL)"; \
+	fi
 
 run-local: ## Run locally (no Databricks needed)
 	python orchestrator.py \
